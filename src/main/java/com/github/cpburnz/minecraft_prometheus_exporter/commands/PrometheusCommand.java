@@ -22,7 +22,7 @@ public interface PrometheusCommand {
     /**
      * The message for command usage.
      */
-    String MSG_USAGE = "/prometheus <start|stop|restart>";
+    String MSG_USAGE = "/prometheus <start|stop|restart> or " + TrackingCommands.USAGE;
 
     /**
      * The message for when starting the exporter is invalid.

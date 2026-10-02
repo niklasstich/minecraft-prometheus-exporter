@@ -84,6 +84,26 @@ public class ExporterConfig {
         @Config.Comment("How often (in server ticks; 20 = 1 second) to refresh ServerUtilities team metrics")
         public int teams_interval_ticks;
 
+        @Config.RangeInt(min = 1, max = 72000)
+        @Config.DefaultInt(20)
+        @Config.Comment("How often (in server ticks) to refresh enabled LSC targets")
+        public int lsc_interval_ticks = 20;
+
+        @Config.RangeInt(min = 1, max = 72000)
+        @Config.DefaultInt(20)
+        @Config.Comment("How often (in server ticks) to refresh enabled AE2 network targets")
+        public int ae2_network_interval_ticks = 20;
+
+        @Config.RangeInt(min = 1, max = 72000)
+        @Config.DefaultInt(20)
+        @Config.Comment("How often (in server ticks) to refresh CPUs on enabled AE2 networks")
+        public int ae2_cpu_interval_ticks = 20;
+
+        @Config.RangeInt(min = 1, max = 72000)
+        @Config.DefaultInt(20)
+        @Config.Comment("How often (in server ticks) to refresh enabled team powerfail targets")
+        public int powerfails_interval_ticks = 20;
+
         @Config.RangeInt(min = 0, max = 4)
         @Config.DefaultInt(4)
         @Config.Comment("What permission level should be required to restart the exporter")

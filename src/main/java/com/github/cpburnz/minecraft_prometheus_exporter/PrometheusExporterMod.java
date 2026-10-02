@@ -6,6 +6,8 @@ import java.net.BindException;
 import javax.annotation.Nullable;
 
 import net.minecraft.server.MinecraftServer;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.world.WorldEvent;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -21,7 +23,16 @@ import com.github.cpburnz.minecraft_prometheus_exporter.collectors.Teams;
 import com.github.cpburnz.minecraft_prometheus_exporter.collectors.Ticks;
 import com.github.cpburnz.minecraft_prometheus_exporter.collectors.TileEntities;
 import com.github.cpburnz.minecraft_prometheus_exporter.commands.ForgePrometheusCommand;
+import com.github.cpburnz.minecraft_prometheus_exporter.integrations.ae2.Ae2CpuCollector;
+import com.github.cpburnz.minecraft_prometheus_exporter.integrations.ae2.Ae2GridResolver;
+import com.github.cpburnz.minecraft_prometheus_exporter.integrations.ae2.Ae2NetworkCollector;
+import com.github.cpburnz.minecraft_prometheus_exporter.integrations.lsc.LscAdapter;
+import com.github.cpburnz.minecraft_prometheus_exporter.integrations.lsc.LscCollector;
+import com.github.cpburnz.minecraft_prometheus_exporter.integrations.powerfails.PowerfailAdapter;
+import com.github.cpburnz.minecraft_prometheus_exporter.integrations.powerfails.PowerfailCollector;
 import com.github.cpburnz.minecraft_prometheus_exporter.prometheus_exporter.Tags;
+import com.github.cpburnz.minecraft_prometheus_exporter.tracking.InstrumentationStore;
+import com.github.cpburnz.minecraft_prometheus_exporter.tracking.TargetRegistry;
 import com.gtnewhorizon.gtnhlib.config.ConfigException;
 import com.gtnewhorizon.gtnhlib.config.ConfigurationManager;
 
@@ -31,7 +42,7 @@ import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import cpw.mods.fml.common.event.FMLServerStartedEvent;
 import cpw.mods.fml.common.event.FMLServerStartingEvent;
 import cpw.mods.fml.common.event.FMLServerStoppedEvent;
-import cpw.mods.fml.relauncher.Side;
+import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import io.prometheus.client.CollectorRegistry;
 import io.prometheus.client.exporter.HTTPServer;
 import io.prometheus.client.hotspot.DefaultExports;
@@ -78,6 +89,19 @@ public class PrometheusExporterMod {
      * The Minecraft server.
      */
     private MinecraftServer mc_server;
+    private TargetRegistry targets;
+    private InstrumentationStore instrumentation;
+    private LscAdapter lscAdapter;
+    private Ae2CpuCollector ae2CpuCollector;
+
+    /** Server-thread APIs; null means no world or an invalid selection file. */
+    public TargetRegistry targets() {
+        return targets;
+    }
+
+    public InstrumentationStore instrumentation() {
+        return instrumentation;
+    }
 
     /**
      * Constructs the instance.
@@ -91,6 +115,9 @@ public class PrometheusExporterMod {
      * Unregister the metrics collectors.
      */
     private void closeCollectors() {
+        this.clearTrackingBindings();
+        this.lscAdapter = null;
+        this.ae2CpuCollector = null;
         // Stop the refresh scheduler.
         if (this.scheduler != null) {
             this.scheduler.clear();
@@ -143,12 +170,38 @@ public class PrometheusExporterMod {
         if (cfg.teams && ModCompat.ServerUtilities.isLoaded())
             this.addSampler(new Teams(this.mc_server, cfg.teams_interval_ticks));
 
+        if (this.targets != null && this.instrumentation != null) {
+            this.initTrackingCollectors(
+                LscAdapter.create(this.targets, this.instrumentation),
+                Ae2GridResolver.create(this.targets),
+                PowerfailAdapter.create(this.targets));
+        }
+
         // Self-monitoring metrics about the collectors.
         if (cfg.self_metrics) new SelfMetrics(this.scheduler).register();
 
         // Populate every snapshot once so the first scrape is not empty. Runs on
         // the server thread (server-started event).
         this.scheduler.refreshAll();
+    }
+
+    /** Register supported integrations even with no selections, so commands can enable targets later. */
+    void initTrackingCollectors(LscAdapter lsc, Ae2GridResolver ae2, PowerfailAdapter powerfails) {
+        ExporterConfig.Collector cfg = ExporterConfig.collector;
+        this.lscAdapter = lsc;
+        if (lsc != null) this.addSampler(new LscCollector(this.targets, lsc, cfg.lsc_interval_ticks));
+        if (ae2 != null) {
+            this.addSampler(new Ae2NetworkCollector(ae2, cfg.ae2_network_interval_ticks));
+            this.ae2CpuCollector = new Ae2CpuCollector(ae2, this.instrumentation, cfg.ae2_cpu_interval_ticks);
+            this.addSampler(this.ae2CpuCollector);
+        }
+        if (powerfails != null)
+            this.addSampler(new PowerfailCollector(this.targets, powerfails, cfg.powerfails_interval_ticks));
+    }
+
+    private void clearTrackingBindings() {
+        if (this.ae2CpuCollector != null) this.ae2CpuCollector.clear();
+        if (this.lscAdapter != null) this.lscAdapter.clear();
     }
 
     /**
@@ -204,12 +257,20 @@ public class PrometheusExporterMod {
             throw new RuntimeException(e);
         }
 
-        if (event.getSide() == Side.CLIENT) return;
+        MinecraftForge.EVENT_BUS.register(this);
 
         // Register event handlers.
         FMLCommonHandler.instance()
             .bus()
             .register(this);
+    }
+
+    @SubscribeEvent
+    public void onWorldUnload(WorldEvent.Unload event) {
+        if (!event.world.isRemote && this.instrumentation != null) {
+            this.clearTrackingBindings();
+            this.instrumentation.clearDimensionBindings();
+        }
     }
 
     /**
@@ -224,6 +285,16 @@ public class PrometheusExporterMod {
 
         // Record the Minecraft server.
         this.mc_server = event.getServer();
+        try {
+            this.targets = TargetRegistry.open(
+                this.mc_server.worldServerForDimension(0)
+                    .getSaveHandler()
+                    .getWorldDirectory()
+                    .toPath());
+            this.instrumentation = new InstrumentationStore(this.targets);
+        } catch (IOException e) {
+            LOG.error("Target tracking disabled; repair the world target configuration and restart the server", e);
+        }
     }
 
     /**
@@ -252,6 +323,10 @@ public class PrometheusExporterMod {
         if (this.is_running) {
             this.stopExporter();
         }
+        if (this.instrumentation != null) this.instrumentation.stop();
+        if (this.targets != null) this.targets.close();
+        this.instrumentation = null;
+        this.targets = null;
         this.mc_server = null;
     }
 
@@ -271,6 +346,7 @@ public class PrometheusExporterMod {
         // Start HTTP server.
         this.initHttpServer();
 
+        if (this.instrumentation != null) this.instrumentation.start();
         // Register collectors.
         this.initCollectors();
 
@@ -290,6 +366,7 @@ public class PrometheusExporterMod {
 
         // Close collectors.
         this.closeCollectors();
+        if (this.instrumentation != null) this.instrumentation.stop();
 
         // Stop HTTP server.
         this.closeHttpServer();

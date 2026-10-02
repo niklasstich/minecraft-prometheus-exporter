@@ -1,0 +1,10 @@
+{
+  "required": true,
+  "minVersion": "0.8.5-GTNH",
+  "package": "com.github.cpburnz.minecraft_prometheus_exporter.mixins",
+  "target": "@env(DEFAULT)",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": [],
+  "client": [],
+  "server": []
+}
