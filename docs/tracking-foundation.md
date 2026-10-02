@@ -53,8 +53,10 @@ runtime accounting. Any server dimension unload conservatively clears all bindin
 Selections survive exporter restarts. Future adapters must call their `clear()`
 method on exporter stop and world unload; persistence must never retain them.
 
-Mixins are enabled through UniMixins. The early config is intentionally empty.
-`LateMixinLoader` checks mod presence and the exact beta-3 version before returning
+Mixins are enabled through UniMixins. The early config skips Java module descriptors
+during Forge jar discovery, since FML's legacy ASM cannot parse these non-mod entries.
+`mixinloading.LateMixinLoader` lives outside the reserved `mixins` package so Forge
+can instantiate it. It checks mod presence and the exact beta-3 version before returning
 optional hooks. Each feature owns a separate manifest and Java package:
 
 | Task | Manifest under `src/main/resources/mixins/prometheus_exporter/` | Package under the mod's `mixins` package |

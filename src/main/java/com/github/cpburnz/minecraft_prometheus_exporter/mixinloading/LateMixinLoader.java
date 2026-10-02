@@ -1,4 +1,4 @@
-package com.github.cpburnz.minecraft_prometheus_exporter.mixins;
+package com.github.cpburnz.minecraft_prometheus_exporter.mixinloading;
 
 import java.io.BufferedReader;
 import java.io.IOException;
